@@ -12,10 +12,10 @@ Required:
 
 Common Alliance/FIR options:
   --account ACCOUNT          SLURM account, for example def-PI_NAME
-  --time HH:MM:SS            Walltime (default: 12:00:00)
-  --cpus N                   CPUs per task (default: 8)
-  --mem SIZE                 Memory per task (default: 32G)
-  --gres GRES                GPU request (default: gpu:1)
+  --time HH:MM:SS            Walltime (default: 04:00:00)
+  --cpus N                   CPUs per task (default: 4)
+  --mem SIZE                 Memory per task (default: 16G)
+  --gres GRES                GPU request (default: gpu:h100_2g.20gb:1)
   --partition PARTITION      Optional SLURM partition
   --array-limit N            Max simultaneously running array tasks
 
@@ -41,6 +41,7 @@ Example:
     --account def-yourpi \
     --modules "StdEnv/2023 gcc cuda" \
     --env "$HOME/venvs/colabfold" \
+    --gres gpu:h100_2g.20gb:1 \
     --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 3"
 USAGE
 }
@@ -54,10 +55,10 @@ INPUT_FASTA=""
 OUTPUT_DIR=""
 ACCOUNT=""
 PARTITION=""
-TIME="12:00:00"
-CPUS="8"
-MEM="32G"
-GRES="gpu:1"
+TIME="04:00:00"
+CPUS="4"
+MEM="16G"
+GRES="gpu:h100_2g.20gb:1"
 ARRAY_LIMIT=""
 MODULES=""
 ENV_NAME=""

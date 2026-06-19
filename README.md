@@ -28,10 +28,10 @@ scripts/submit_colabfold_slurm.sh \
   --input og-complexes_grouped.fasta \
   --output "$SCRATCH/colabfold_results" \
   --account def-yourpi \
-  --time 12:00:00 \
-  --cpus 8 \
-  --mem 32G \
-  --gres gpu:1 \
+  --time 04:00:00 \
+  --cpus 4 \
+  --mem 16G \
+  --gres gpu:h100_2g.20gb:1 \
   --modules "StdEnv/2023 gcc cuda" \
   --env "$HOME/venvs/colabfold" \
   --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 3 --num-models 5"
@@ -46,6 +46,17 @@ scripts/submit_colabfold_slurm.sh \
   --account def-yourpi \
   --dry-run
 ```
+
+## Smaller MIG Jobs
+
+The defaults are tuned for faster queueing with smaller jobs:
+
+- `--gres gpu:h100_2g.20gb:1`
+- `--time 04:00:00`
+- `--cpus 4`
+- `--mem 16G`
+
+If FIR exposes a different MIG GRES name, check available GPU resources with `sinfo -o "%G"` and override the request with `--gres`, for example `--gres gpu:h100_1g.10gb:1` or the exact string shown by SLURM.
 
 ## FASTA Array Behavior
 
