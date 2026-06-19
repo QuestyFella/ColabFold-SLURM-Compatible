@@ -21,6 +21,10 @@ Install or load ColabFold so `colabfold_batch` is available inside the job. The 
 
 On Alliance clusters, keep large outputs under `$SCRATCH` and let the job use `$SLURM_TMPDIR` for temporary node-local I/O.
 
+For Apptainer/Singularity runs, the submit script defaults `--data` to `$SCRATCH/colabfold_data`, creates it, and bind-mounts it plus `$SLURM_TMPDIR` into the container. If model weights have not been downloaded yet, the first submission is automatically limited to one array task to avoid all tasks downloading the same weights concurrently.
+
+The job wrapper also clears host TLS certificate variables for container runs and sets the container CA bundle path to `/etc/ssl/certs/ca-certificates.crt`. This prevents host paths such as `/etc/pki/tls/certs/ca-bundle.crt` from breaking model-weight downloads inside the container.
+
 ## Submit Example
 
 ```bash
@@ -35,6 +39,58 @@ scripts/submit_colabfold_slurm.sh \
   --modules "StdEnv/2023 gcc cuda" \
   --env "$HOME/venvs/colabfold" \
   --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 3 --num-models 5"
+```
+
+## FIR Apptainer Quick Start
+
+The Python virtualenv route can fail on FIR because the Alliance wheelhouse may not provide all TensorFlow/JAX wheels required by ColabFold. The tested path is to use the official ColabFold container:
+
+```bash
+module load apptainer
+mkdir -p "$SCRATCH/containers" "$SCRATCH/colabfold_data"
+apptainer pull "$SCRATCH/containers/colabfold.sif" docker://ghcr.io/sokrypton/colabfold:1.6.1-cuda12
+```
+
+Run a cheap preflight before submitting the array:
+
+```bash
+unset REQUESTS_CA_BUNDLE SSL_CERT_FILE CURL_CA_BUNDLE
+export APPTAINERENV_REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export APPTAINERENV_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+export APPTAINERENV_CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+apptainer exec --nv "$SCRATCH/containers/colabfold.sif" \
+  python -c 'import requests; r=requests.get("https://storage.googleapis.com", timeout=20); print("TLS_OK", r.status_code)'
+```
+
+Submit the full-quality run:
+
+```bash
+scripts/submit_colabfold_slurm.sh \
+  --input og-complexes_grouped.fasta \
+  --output "$SCRATCH/colabfold_results" \
+  --account def-yourpi \
+  --data "$SCRATCH/colabfold_data" \
+  --array-limit 1 \
+  --batch-cmd "apptainer exec --nv $SCRATCH/containers/colabfold.sif colabfold_batch" \
+  --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 3 --num-models 5"
+```
+
+Keep `--array-limit 1` for the first successful run so only one task downloads model weights into `$SCRATCH/colabfold_data`. After `$SCRATCH/colabfold_data/params` exists, use `--array-limit 2`, `--array-limit 4`, or omit it depending on queue pressure and allocation limits.
+
+For a faster deadline run with lower accuracy, reduce the model count and recycle count:
+
+```bash
+scripts/submit_colabfold_slurm.sh \
+  --input og-complexes_grouped.fasta \
+  --output "$SCRATCH/colabfold_fast_results" \
+  --account def-yourpi \
+  --data "$SCRATCH/colabfold_data" \
+  --array-limit 4 \
+  --time 02:00:00 \
+  --cpus 4 \
+  --mem 24G \
+  --batch-cmd "apptainer exec --nv $SCRATCH/containers/colabfold.sif colabfold_batch" \
+  --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 1 --num-models 1"
 ```
 
 Use `--dry-run` first to verify the generated `sbatch` command:
@@ -74,6 +130,19 @@ The included example contains complex inputs using `:` chain separators, which C
 
 If AlphaFold parameter weights are stored in a shared directory, pass it with `--data /path/to/params` or export `COLABFOLD_DATA`.
 
+For the first container run on FIR, prefer:
+
+```bash
+scripts/submit_colabfold_slurm.sh \
+  --input og-complexes_grouped.fasta \
+  --output "$SCRATCH/colabfold_results" \
+  --account def-yourpi \
+  --batch-cmd "apptainer exec --nv $SCRATCH/containers/colabfold.sif colabfold_batch" \
+  --extra-args "--model-type alphafold2_multimer_v3 --num-recycle 3 --num-models 5"
+```
+
+This will use `$SCRATCH/colabfold_data` for downloaded weights. After that directory contains `params/`, you can add `--array-limit 2` or omit `--array-limit` for more concurrency.
+
 ## Monitoring
 
 The submit script creates per-run files under `.slurm/<job-name>_<timestamp>/`:
@@ -83,3 +152,19 @@ The submit script creates per-run files under `.slurm/<job-name>_<timestamp>/`:
 - `logs/`: SLURM stdout/stderr files.
 
 Results are copied to `<output>/<split-fasta-name>/` after each task completes.
+
+Useful FIR monitoring commands:
+
+```bash
+squeue -u "$USER"
+LATEST_LOG_DIR="$(ls -td .slurm/colabfold_*/logs | head -1)"
+tail -f "$LATEST_LOG_DIR"/*.out "$LATEST_LOG_DIR"/*.err
+du -sh "$SCRATCH/colabfold_data" "$SCRATCH/colabfold_results" 2>/dev/null
+```
+
+If a job fails, inspect only the newest log directory so old failed runs do not get mixed into the diagnosis:
+
+```bash
+LATEST_LOG_DIR="$(ls -td .slurm/colabfold_*/logs | head -1)"
+tail -n 120 "$LATEST_LOG_DIR"/*.err
+```

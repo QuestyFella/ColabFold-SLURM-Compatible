@@ -59,6 +59,7 @@ if ! command -v "${COLABFOLD_BATCH_CMD[0]}" >/dev/null 2>&1; then
   echo "Could not find ${COLABFOLD_BATCH_CMD[0]}. Load a module, activate an env, or set COLABFOLD_BATCH." >&2
   exit 127
 fi
+CONTAINER_RUNTIME="$(basename "${COLABFOLD_BATCH_CMD[0]}")"
 
 mapfile -t FASTA_FILES < "${INPUT_LIST}"
 TASK_ID="${SLURM_ARRAY_TASK_ID:-1}"
@@ -79,6 +80,9 @@ JOB_ROOT="${SLURM_TMPDIR:-${TMPDIR:-/tmp}}/colabfold_${SLURM_JOB_ID:-local}_${TA
 WORK_INPUT="${JOB_ROOT}/input"
 WORK_OUTPUT="${JOB_ROOT}/output"
 mkdir -p "${WORK_INPUT}" "${WORK_OUTPUT}" "${RESULTS_DIR}"
+if [[ -n "${COLABFOLD_DATA:-}" ]]; then
+  mkdir -p "${COLABFOLD_DATA}"
+fi
 
 FASTA_BASENAME="$(basename "${INPUT_FASTA}")"
 cp "${INPUT_FASTA}" "${WORK_INPUT}/${FASTA_BASENAME}"
@@ -88,6 +92,38 @@ export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.85}"
 export TF_FORCE_UNIFIED_MEMORY="${TF_FORCE_UNIFIED_MEMORY:-1}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+BIND_PATHS=("${RESULTS_DIR}:${RESULTS_DIR}")
+if [[ -n "${SCRATCH:-}" ]]; then
+  BIND_PATHS+=("${SCRATCH}:${SCRATCH}")
+fi
+if [[ -n "${SLURM_TMPDIR:-}" ]]; then
+  BIND_PATHS+=("${SLURM_TMPDIR}:${SLURM_TMPDIR}")
+fi
+if [[ -n "${COLABFOLD_DATA:-}" ]]; then
+  BIND_PATHS+=("${COLABFOLD_DATA}:${COLABFOLD_DATA}")
+fi
+BIND_VALUE="$(IFS=,; echo "${BIND_PATHS[*]}")"
+if [[ -n "${APPTAINER_BINDPATH:-}" ]]; then
+  export APPTAINER_BINDPATH="${APPTAINER_BINDPATH},${BIND_VALUE}"
+else
+  export APPTAINER_BINDPATH="${BIND_VALUE}"
+fi
+if [[ -n "${SINGULARITY_BINDPATH:-}" ]]; then
+  export SINGULARITY_BINDPATH="${SINGULARITY_BINDPATH},${BIND_VALUE}"
+else
+  export SINGULARITY_BINDPATH="${BIND_VALUE}"
+fi
+
+if [[ "${CONTAINER_RUNTIME}" == "apptainer" || "${CONTAINER_RUNTIME}" == "singularity" ]]; then
+  unset REQUESTS_CA_BUNDLE SSL_CERT_FILE CURL_CA_BUNDLE
+  export APPTAINERENV_REQUESTS_CA_BUNDLE="${APPTAINERENV_REQUESTS_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+  export APPTAINERENV_SSL_CERT_FILE="${APPTAINERENV_SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+  export APPTAINERENV_CURL_CA_BUNDLE="${APPTAINERENV_CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+  export SINGULARITYENV_REQUESTS_CA_BUNDLE="${SINGULARITYENV_REQUESTS_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+  export SINGULARITYENV_SSL_CERT_FILE="${SINGULARITYENV_SSL_CERT_FILE:-/etc/ssl/certs/ca-certificates.crt}"
+  export SINGULARITYENV_CURL_CA_BUNDLE="${SINGULARITYENV_CURL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+fi
 
 echo "Running ${COLABFOLD_BATCH} on ${INPUT_FASTA}"
 echo "Temporary work directory: ${JOB_ROOT}"

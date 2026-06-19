@@ -24,6 +24,7 @@ ColabFold environment:
   --env ENV                  Virtualenv path, conda env name, or shell setup file
   --batch-cmd CMD            colabfold_batch command, path, or container wrapper
   --data DIR                 ColabFold/AlphaFold parameter data directory
+                             (container default: $SCRATCH/colabfold_data)
   --extra-args "ARGS"        Extra arguments appended to colabfold_batch
 
 Input splitting:
@@ -103,6 +104,27 @@ if [[ ! -f "${INPUT_FASTA}" ]]; then
   exit 2
 fi
 
+IS_CONTAINER_RUN="0"
+if [[ " ${BATCH_CMD} " == *" apptainer "* || " ${BATCH_CMD} " == *" singularity "* ]]; then
+  IS_CONTAINER_RUN="1"
+fi
+
+if [[ "${IS_CONTAINER_RUN}" == "1" && -z "${DATA_DIR}" ]]; then
+  if [[ -z "${SCRATCH:-}" ]]; then
+    echo "Container runs need --data DIR when SCRATCH is not set" >&2
+    exit 2
+  fi
+  DATA_DIR="${SCRATCH}/colabfold_data"
+fi
+
+if [[ -n "${DATA_DIR}" ]]; then
+  mkdir -p "${DATA_DIR}"
+  if [[ ! -w "${DATA_DIR}" ]]; then
+    echo "ColabFold data directory is not writable: ${DATA_DIR}" >&2
+    exit 2
+  fi
+fi
+
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 WORK_DIR="${REPO_ROOT}/.slurm/${JOB_NAME}_${RUN_ID}"
 SPLIT_DIR="${WORK_DIR}/inputs"
@@ -123,6 +145,11 @@ fi
 ARRAY_SPEC="1-${TASK_COUNT}"
 if [[ -n "${ARRAY_LIMIT}" ]]; then
   ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_LIMIT}"
+elif [[ -n "${DATA_DIR}" && ! -d "${DATA_DIR}/params" && "${TASK_COUNT}" != "1" ]]; then
+  ARRAY_LIMIT="1"
+  ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_LIMIT}"
+  echo "No AlphaFold params found in ${DATA_DIR}/params; limiting first run to one array task."
+  echo "After params download, rerun with --array-limit 2 or omit --array-limit."
 fi
 
 SBATCH_ARGS=(
@@ -147,6 +174,9 @@ fi
 echo "Prepared ${TASK_COUNT} SLURM task(s)"
 echo "Input list: ${INPUT_LIST}"
 echo "Logs: ${LOG_DIR}"
+if [[ -n "${DATA_DIR}" ]]; then
+  echo "ColabFold data: ${DATA_DIR}"
+fi
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   printf 'sbatch'
